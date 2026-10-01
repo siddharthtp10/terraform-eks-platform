@@ -1,0 +1,32 @@
+# Runs on every `git commit` so formatting/lint problems never reach CI.
+# Install once:  pip install pre-commit && pre-commit install
+# Run on demand: pre-commit run --all-files
+#
+# `rev` values are pinned to released tags (not `main`) so everybody on the team
+# and CI runs identical hook versions. Bump them deliberately with
+# `pre-commit autoupdate`.
+repos:
+  - repo: https://github.com/antonbabenko/pre-commit-terraform
+    rev: v1.109.2
+    hooks:
+      # terraform fmt: canonical formatting, ends style debates in review.
+      - id: terraform_fmt
+      # terraform validate: catches syntax errors and bad references offline
+      # (needs `terraform init -backend=false` in each dir the first time).
+      - id: terraform_validate
+        args:
+          - --hook-config=--retry-once-with-cleanup=true
+      # tflint: catches things validate can't (e.g. invalid instance types,
+      # unused variables, missing version constraints).
+      - id: terraform_tflint
+        args:
+          - --args=--config=__GIT_WORKING_DIR__/.tflint.hcl
+
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: end-of-file-fixer
+      - id: trailing-whitespace
+      - id: check-merge-conflict
+      # Last line of defence against committing a private key.
+      - id: detect-private-key

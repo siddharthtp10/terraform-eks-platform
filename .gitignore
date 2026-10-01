@@ -1,0 +1,44 @@
+# --- Terraform local state: NEVER commit. State contains resource IDs and often
+# secrets in plaintext. It lives in S3 (see bootstrap/), not in git.
+*.tfstate
+*.tfstate.*
+crash.log
+crash.*.log
+
+# --- Provider plugins & module cache: large, re-created by `terraform init`.
+.terraform/
+
+# --- Variable files hold environment-specific values (account IDs, CIDRs...).
+# Commit only the *.tfvars.example templates, never the real thing.
+*.tfvars
+*.tfvars.json
+!*.tfvars.example
+
+# --- Local overrides and saved plans (a plan file can embed secrets).
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+*.tfplan
+tfplan
+
+# NOTE: .terraform.lock.hcl is deliberately NOT ignored. Commit it: it pins the
+# exact provider versions + checksums so CI and your laptop use identical plugins.
+
+# --- Kubernetes credentials
+kubeconfig
+kubeconfig*
+*.kubeconfig
+.kube/
+
+# --- Secrets / keys / misc
+*.pem
+*.key
+.env
+.env.*
+.aws/
+
+# --- Editor / OS noise
+.idea/
+.vscode/
+.DS_Store
