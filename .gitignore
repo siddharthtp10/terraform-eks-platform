@@ -22,6 +22,10 @@ override.tf.json
 *.tfplan
 tfplan
 
+# --- Backend config holds the real state bucket name. Commit backend.hcl.example
+# only. (Exact filename, so .tflint.hcl and .terraform.lock.hcl stay tracked.)
+backend.hcl
+
 # NOTE: .terraform.lock.hcl is deliberately NOT ignored. Commit it: it pins the
 # exact provider versions + checksums so CI and your laptop use identical plugins.
 

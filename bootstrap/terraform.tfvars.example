@@ -1,0 +1,9 @@
+# Copy to terraform.tfvars (gitignored) and set your own value:
+#   cp terraform.tfvars.example terraform.tfvars
+#
+# Bucket names are globally unique across all AWS accounts. Add something
+# personal or random so it is not already taken.
+state_bucket_name = "REPLACE-ME-tfstate-yourname-random123"
+
+# aws_region defaults to ap-south-1; uncomment to override.
+# aws_region = "ap-south-1"
