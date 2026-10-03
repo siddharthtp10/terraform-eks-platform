@@ -21,7 +21,7 @@ Designed to be cheap and **destroyed after use**.
 - [x] 1. Repo skeleton, `.gitignore`, pre-commit
 - [x] 2. Remote state bootstrap
 - [x] 3. VPC
-- [ ] 4. EKS
+- [x] 4. EKS
 - [ ] 5. GitHub Actions + OIDC + scanning
 - [ ] 6. Flux GitOps
 - [ ] 7. Final docs (architecture, cost, destroy, security)
@@ -51,8 +51,33 @@ aws pricing get-products --region us-east-1 --service-code AmazonEC2 \
   --output json
 ```
 
-Estimated cost per hour = NAT hourly rate + public IPv4 hourly rate (+ EKS and
-nodes from Stage 4). `terraform destroy` stops the clock.
+### EKS (Stage 4)
+
+| Item | Price | Source |
+|---|---|---|
+| EKS control plane, per cluster per hour (Kubernetes version in standard support) | **$0.10** | [Amazon EKS pricing](https://aws.amazon.com/eks/pricing/) |
+| Same, if the version falls into extended support | $0.60 | [Amazon EKS pricing](https://aws.amazon.com/eks/pricing/) |
+| 1 x `t3.medium` worker node (On-Demand, ap-south-1), per hour | _verify_ | [Amazon EC2 on-demand pricing](https://aws.amazon.com/ec2/pricing/on-demand/) |
+| EBS root volume of the node (20 GiB gp3 by default) | small; per GB-month | [Amazon EBS pricing](https://aws.amazon.com/ebs/pricing/) |
+| KMS key for Secrets encryption | about $1 per month, prorated | [AWS KMS pricing](https://aws.amazon.com/kms/pricing/) |
+
+The EKS control-plane price is the same in every region; it is the figure published
+on the EKS pricing page ($0.10 standard, $0.60 extended). The node price
+could not be confirmed from the AWS site when this stage was written, so look it up:
+
+```bash
+aws pricing get-products --region us-east-1 --service-code AmazonEC2 \
+  --filters Type=TERM_MATCH,Field=regionCode,Value=ap-south-1 \
+            Type=TERM_MATCH,Field=instanceType,Value=t3.medium \
+            Type=TERM_MATCH,Field=operatingSystem,Value=Linux \
+            Type=TERM_MATCH,Field=tenancy,Value=Shared \
+            Type=TERM_MATCH,Field=preInstalledSw,Value=NA \
+            Type=TERM_MATCH,Field=capacitystatus,Value=Used \
+  --output json
+```
+
+Estimated cost per hour = $0.10 (control plane) + node hourly rate + NAT hourly
+rate + public IPv4 hourly rate (+ data processing). `terraform destroy` stops the clock.
 
 ## Prerequisites (so far)
 
