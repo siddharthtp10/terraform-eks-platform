@@ -4,6 +4,8 @@ A small, production-style Terraform platform on AWS: remote state, a VPC, an EKS
 cluster, GitHub Actions CI/CD via OIDC, security scanning and Flux GitOps.
 Designed to be cheap and **destroyed after use**.
 
+[![Terraform PR](https://github.com/siddharthtp10/terraform-eks-platform/actions/workflows/terraform-pr.yml/badge.svg)](https://github.com/siddharthtp10/terraform-eks-platform/actions/workflows/terraform-pr.yml)
+
 > Status: **work in progress** - built stage by stage. Full docs land in Stage 7.
 
 ## Layout
@@ -13,7 +15,8 @@ Designed to be cheap and **destroyed after use**.
 | `bootstrap/` | One-off config that creates the S3 state bucket (chicken-and-egg: state storage can't live in itself). |
 | `envs/dev/` | The actual platform for the `dev` environment (VPC, EKS, ...). |
 | `modules/` | Local reusable modules, only if community modules don't fit. |
-| `.github/workflows/` | CI/CD pipelines (plan on PR, apply on merge). |
+| `ci-access/` | One-off config: GitHub OIDC provider + least-privilege plan/apply IAM roles for CI. |
+| `.github/workflows/` | CI/CD: checks and read-only plan on every PR; manual, approval-gated apply. |
 | `docs/` | Interview notes and design docs. |
 
 ## Stages
@@ -22,9 +25,19 @@ Designed to be cheap and **destroyed after use**.
 - [x] 2. Remote state bootstrap
 - [x] 3. VPC
 - [x] 4. EKS
-- [ ] 5. GitHub Actions + OIDC + scanning
+- [x] 5. GitHub Actions + OIDC + scanning
 - [ ] 6. Flux GitOps
 - [ ] 7. Final docs (architecture, cost, destroy, security)
+
+## CI/CD
+
+- **Pull request:** `fmt`, `validate`, `tflint`, a Trivy misconfiguration scan that **fails on HIGH/CRITICAL**,
+  then a read-only `terraform plan` posted as a PR comment (account IDs and IPs redacted).
+- **Apply:** manual (`workflow_dispatch`), runs in a GitHub Environment that needs a reviewer's approval,
+  so a merge never silently starts the hourly bill.
+- **Auth:** GitHub OIDC assumes an IAM role per job; no AWS keys are stored anywhere.
+
+Setup steps: [docs/ci-setup.md](docs/ci-setup.md).
 
 ## Cost
 

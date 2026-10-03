@@ -1,0 +1,4 @@
+# cp backend.hcl.example backend.hcl   (backend.hcl is gitignored)
+bucket = "REPLACE-ME-same-name-as-bootstrap-state_bucket_name"
+key    = "ci-access/terraform.tfstate"
+region = "ap-south-1"
