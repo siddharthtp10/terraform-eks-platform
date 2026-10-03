@@ -84,3 +84,58 @@ security token` / region errors.
 Debug: `aws sts get-caller-identity` (confirm which account/identity you are),
 check `aws_region` in tfvars equals `region` in backend.hcl, and pick a more
 unique bucket name. Re-run `terraform plan`; S3 names are global, not per-account.
+
+## Stage 3 - VPC (terraform-aws-modules/vpc)
+
+**Q1. What makes a subnet "public" vs "private", and how does a route table do it?**
+There is no "public" flag on a subnet. A subnet is public if its route table has a
+route `0.0.0.0/0 -> Internet Gateway`; it is private if it doesn't (its default
+route points at a NAT gateway instead, or nowhere). The route table decides where
+packets go, and that is the whole difference. Instances in a public subnet also
+need a public IP to be reachable; ours don't get one automatically.
+
+**Q2. Why do we need a NAT gateway, and what does it cost?**
+Worker nodes live in private subnets with no public IPs, but they must still pull
+container images and call AWS APIs. A NAT gateway sits in a public subnet and
+lets private resources start outbound connections while blocking unsolicited
+inbound ones. It is one of the pricier "idle" resources: you pay per hour it
+exists regardless of traffic, plus per GB processed (see the README Cost note).
+That's why the S3 gateway endpoint matters: it is free and sends S3 traffic
+(including ECR image layers) around the NAT.
+
+**Q3. Why does EKS need specific tags on subnets?**
+Kubernetes doesn't know which subnets to use for load balancers; it finds them
+by tag. `kubernetes.io/role/elb=1` marks subnets for internet-facing load
+balancers, `kubernetes.io/role/internal-elb=1` marks internal ones, and
+`kubernetes.io/cluster/<name>=shared` ties them to the cluster. The AWS Load
+Balancer Controller reads these tags. Without them, a Service of type
+LoadBalancer or an Ingress fails with "unable to find suitable subnets".
+
+**Q4. One NAT gateway vs one per AZ?**
+One is cheaper (you pay the fixed hourly cost once), but it's a single point of
+failure: if its AZ goes down, nodes in the other AZ lose outbound internet, and
+cross-AZ traffic to reach it is billed. One per AZ costs more but each AZ is
+independent and traffic stays local. I use one for a destroy-after-use demo
+(`single_nat_gateway = true`) and would use one per AZ in production. It is a
+single variable, which is the point of using a module.
+
+**Q5. How does `cidrsubnet()` work?**
+`cidrsubnet(prefix, newbits, netnum)` splits a network into smaller ones.
+`newbits` is how many bits are added to the prefix length and `netnum` picks which
+of the resulting 2^newbits blocks you want. `cidrsubnet("10.0.0.0/16", 4, 1)` gives
+`10.0.16.0/20`: /16 + 4 bits = /20, and block number 1 starts 4,096 addresses in.
+Deriving subnets from the VPC CIDR avoids typos and overlaps, and it scales
+with `azs_count`. (CloudFormation has `Fn::Cidr`, but Terraform lets you loop
+and compute with ordinary expressions.)
+
+### Commonly breaks at this stage
+`apply` fails with `AddressLimitExceeded` (no free Elastic IPs for the NAT
+gateway), or a subnet error such as `InvalidSubnet.Conflict` / CIDR overlap if
+you changed `vpc_cidr` against an existing VPC, or `InvalidParameterValue` when
+an AZ doesn't support the request.
+Debug: read the failing resource address in the error (for example
+`module.vpc.aws_eip.nat[0]`). For EIPs, check Service Quotas ("EC2-VPC Elastic
+IPs", per region) and release unused addresses. For CIDRs, run
+`terraform console` and evaluate `cidrsubnet("10.0.0.0/16", 4, 0)` to see
+exactly what ranges your variables produce. For AZs, run
+`aws ec2 describe-availability-zones --region ap-south-1`.
