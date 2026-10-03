@@ -1,0 +1,41 @@
+# Keeps pinned dependencies current by opening pull requests.
+#
+# WHY THIS MATTERS HERE: every GitHub Action is pinned to a full commit SHA (safer than
+# a tag, because a tag can be re-pointed). A SHA never updates by itself, so without a
+# bot those pins silently rot. Dependabot bumps the SHA AND the version comment together.
+# Module pins are exact for the same reproducibility reason, so they need a bot too.
+#
+# Every update arrives as a PR, so it runs the full CI (fmt, validate, tflint, Trivy,
+# plan) before anyone merges it. Nothing is applied automatically.
+version: 2
+
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: "ci"
+    groups:
+      github-actions:
+        patterns: ["*"]
+
+  # Providers and modules in every Terraform root. Provider bumps stay inside the
+  # `~>` constraint unless you widen it; module bumps change the exact version pin.
+  - package-ecosystem: terraform
+    directories:
+      - /bootstrap
+      - /ci-access
+      - /envs/dev
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: "terraform"
+
+  # The pinned hook versions in .pre-commit-config.yaml.
+  - package-ecosystem: pre-commit
+    directory: /
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: "chore"
