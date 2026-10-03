@@ -1,0 +1,7 @@
+# cp terraform.tfvars.example terraform.tfvars   (gitignored)
+github_owner      = "<YOUR_GITHUB_USERNAME_OR_ORG>"
+state_bucket_name = "<SAME_BUCKET_AS_BOOTSTRAP>"
+
+# github_repo       = "terraform-eks-platform"
+# apply_environment = "dev-apply"
+# create_oidc_provider = false   # set to false if the account already has the GitHub OIDC provider

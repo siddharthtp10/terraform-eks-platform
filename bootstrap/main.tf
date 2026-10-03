@@ -74,6 +74,11 @@ resource "aws_s3_bucket_versioning" "state" {
 # bucket key above cuts KMS request volume by up to ~99%. Also remember every
 # principal that reads state (including the CI role in Stage 5) then needs
 # kms:Decrypt/GenerateDataKey on that key. For a demo, SSE-S3 is the right trade.
+# Scanner suppression (Trivy AWS-0132 "use a customer managed key"): ACCEPTED RISK.
+# SSE-S3 is a deliberate choice for this cost-conscious demo bucket (reasoning and
+# the cost of KMS are in the comment above). Scoped to this one resource, with an
+# expiry so the decision is revisited instead of forgotten.
+#trivy:ignore:AVD-AWS-0132:exp=2027-06-30
 resource "aws_s3_bucket_server_side_encryption_configuration" "state" {
   bucket = aws_s3_bucket.state.id
 

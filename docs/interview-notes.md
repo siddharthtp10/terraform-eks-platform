@@ -202,3 +202,62 @@ node group creation hangs and fails with `NodeCreationFailure`.
 - NodeCreationFailure: nodes can't reach the API or pull images. Check the NAT
   gateway and private route table from Stage 3, then
   `aws eks describe-nodegroup ... --query nodegroup.health`.
+
+## Stage 5 - GitHub Actions, OIDC, scanning
+
+**Q1. Why is OIDC better than storing AWS access keys in GitHub secrets?**
+A stored key is long-lived: it works from anywhere until someone rotates it, and if
+it leaks (a log, a compromised action, a former contributor) the attacker has
+standing access. With OIDC each job asks GitHub for a signed token that is valid for
+minutes, exchanges it with AWS STS for temporary credentials (1 hour), and those die
+on their own. Nothing secret is stored in GitHub, so there is nothing to rotate or leak.
+AWS decides whether to trust the job by checking the token signature and the role's
+trust-policy conditions.
+
+**Q2. How does the `sub` claim stop another repository from assuming your role?**
+Every repo on GitHub gets valid tokens from the same issuer, so signature checking
+alone proves nothing. The `sub` claim names the exact repo and context, for example
+`repo:OWNER/REPO:pull_request`. The trust policy requires `sub` to equal that string
+(plus `aud = sts.amazonaws.com`), so a token from `someone-else/repo` is rejected. The
+apply role is stricter: it requires `...:environment:dev-apply`, so only a job running
+in the protected environment (reviewer approval, main branch only) can get write
+access. Leaving the `sub` condition off is the classic OIDC mistake.
+
+**Q3. Plan on PR vs apply on merge: what is the reasoning, and why not auto-apply here?**
+Plan on PR gives reviewers the exact diff before anything changes, and it runs with a
+read-only role so a bad PR can't break anything. Apply after merge keeps `main` and
+reality in sync, with an audit trail. For this repo I do NOT auto-apply: the EKS
+stack costs money every hour, so apply is manual and needs an approver. For cheap or
+low-risk stacks a real team would auto-apply on merge, filtered by path, with its own
+role. Also, apply runs from a saved plan file so what is applied is what was planned.
+
+**Q4. What did the security scanner catch?**
+Trivy flagged one HIGH finding, AWS-0132, on the state bucket: it uses SSE-S3 rather
+than a customer-managed KMS key. That was a deliberate cost trade-off, so I suppressed
+it in code next to the decision, scoped to that one resource, with a written reason and
+an expiry date, instead of lowering the severity gate. I also proved the gate works by
+feeding it a deliberately bad config (SSH open to 0.0.0.0/0) and checking it fails the
+build. The point I make in interviews: a scanner finding is a prompt to decide, and
+every suppression should be explicit, justified and time-boxed.
+
+**Q5. A secret was committed or leaked: what do you do?**
+Revoke or rotate it FIRST (deactivate the key or credential in AWS/GitHub); deleting
+the commit does not help because it's already been copied and scanned by bots. Then
+check CloudTrail for what it was used for, remove it from history if needed
+(`git filter-repo`, force-push, and ask GitHub support to purge caches), and add
+prevention: pre-commit secret detection, GitHub secret scanning with push protection,
+and OIDC so there are no long-lived keys to leak. The best answer to "leaked AWS key"
+is that this pipeline has none.
+
+### Commonly breaks at this stage
+The `configure-aws-credentials` step fails with `Not authorized to perform
+sts:AssumeRoleWithWebIdentity`.
+Debug: the trust policy and the token disagree. Check, in order: (1) the job has
+`permissions: id-token: write`; (2) `github_owner` in `ci-access` matches the repo
+owner's exact capitalisation (the claim is case-sensitive); (3) for apply, the job
+declares `environment: dev-apply` and the name equals `apply_environment`; (4) the
+workflow is not running from a fork PR. To see the real claim, temporarily add a step
+that decodes the token, or read the failed AssumeRoleWithWebIdentity event in
+CloudTrail. A later `AccessDenied` on a specific API call (for example
+`ec2:CreateLaunchTemplate`) means a missing permission: read the denied action in
+CloudTrail and add exactly that action to `ci-access/permissions.tf`, then re-apply.
