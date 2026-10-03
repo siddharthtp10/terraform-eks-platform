@@ -1,0 +1,10 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: podinfo
+  labels:
+    # Pod Security Admission: the API server REJECTS pods in this namespace that
+    # run as root, add capabilities, etc. (the "restricted" profile). It's a
+    # built-in guard rail, so a bad manifest merged into Git fails safely.
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/enforce-version: latest

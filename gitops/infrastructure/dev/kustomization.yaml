@@ -1,0 +1,6 @@
+# Environment overlay for infrastructure. Today it only reuses the base; a
+# staging/prod overlay would sit next to it and add or patch things.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../base

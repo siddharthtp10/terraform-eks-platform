@@ -16,6 +16,7 @@ Designed to be cheap and **destroyed after use**.
 | `envs/dev/` | The actual platform for the `dev` environment (VPC, EKS, ...). |
 | `modules/` | Local reusable modules, only if community modules don't fit. |
 | `ci-access/` | One-off config: GitHub OIDC provider + least-privilege plan/apply IAM roles for CI. |
+| `gitops/` | Flux GitOps content (published as its own repo): `clusters/`, `infrastructure/`, `apps/` with a podinfo app and a dev overlay. |
 | `.github/workflows/` | CI/CD: checks and read-only plan on every PR; manual, approval-gated apply. |
 | `docs/` | Interview notes and design docs. |
 
@@ -26,7 +27,7 @@ Designed to be cheap and **destroyed after use**.
 - [x] 3. VPC
 - [x] 4. EKS
 - [x] 5. GitHub Actions + OIDC + scanning
-- [ ] 6. Flux GitOps
+- [x] 6. Flux GitOps
 - [ ] 7. Final docs (architecture, cost, destroy, security)
 
 ## CI/CD
@@ -38,6 +39,13 @@ Designed to be cheap and **destroyed after use**.
 - **Auth:** GitHub OIDC assumes an IAM role per job; no AWS keys are stored anywhere.
 
 Setup steps: [docs/ci-setup.md](docs/ci-setup.md).
+
+## GitOps (Flux)
+
+Flux runs in the cluster and pulls from a Git repository, so deployments need no cluster credentials in CI.
+`gitops/` holds that repository's content (it is published as `terraform-eks-platform-gitops`); a public
+sample app (podinfo) is deployed through a base + `dev` overlay with ordered Flux Kustomizations.
+Bootstrap, verification, a drift-correction demo and the teardown order are in [docs/gitops-setup.md](docs/gitops-setup.md).
 
 ## Cost
 

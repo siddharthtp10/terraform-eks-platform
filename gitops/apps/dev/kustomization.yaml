@@ -1,0 +1,25 @@
+# ENVIRONMENT OVERLAY: take the shared base and change only what differs for dev.
+# A "prod" overlay would sit beside this one (more replicas, different message...)
+# and reuse the same base: one definition, many environments, no copy-paste.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: podinfo # created by the infrastructure Kustomization
+
+resources:
+  - ../base/podinfo
+
+replicas:
+  - name: podinfo
+    count: 2
+
+patches:
+  - target:
+      kind: Deployment
+      name: podinfo
+    patch: |-
+      - op: add
+        path: /spec/template/spec/containers/0/env/-
+        value:
+          name: PODINFO_UI_MESSAGE
+          value: "Hello from dev, delivered by Flux"
