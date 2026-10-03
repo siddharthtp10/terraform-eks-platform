@@ -261,3 +261,63 @@ that decodes the token, or read the failed AssumeRoleWithWebIdentity event in
 CloudTrail. A later `AccessDenied` on a specific API call (for example
 `ec2:CreateLaunchTemplate`) means a missing permission: read the denied action in
 CloudTrail and add exactly that action to `ci-access/permissions.tf`, then re-apply.
+
+## Stage 6 - Flux GitOps
+
+**Q1. Push vs pull deployment: what is the difference?**
+In push, a CI job runs `kubectl apply` or `helm upgrade` against the cluster, so CI
+needs cluster credentials and nothing notices if someone changes the cluster by hand
+afterwards. In pull (GitOps) an agent INSIDE the cluster (Flux) watches a Git repo
+and applies it, so the cluster needs only read access to Git and no external system
+holds cluster admin keys. Git becomes the single source of truth, history is the audit
+log, and a rollback is `git revert`. The trade-off is another component to run and a
+slight delay (the sync interval).
+
+**Q2. How does Flux reconcile?**
+`source-controller` fetches the Git repo (a `GitRepository` object) and publishes the
+revision. `kustomize-controller` runs each Flux `Kustomization`: it builds the manifests
+at a path, applies them with server-side apply, waits for health if `wait: true`, and
+repeats every `interval`. Each loop compares desired (Git) with actual (cluster): if
+they differ, even because someone ran `kubectl scale`, it re-applies Git's version
+(drift correction). `prune: true` deletes things you removed from Git, and `dependsOn`
+orders Kustomizations (apps only after infrastructure is Ready).
+
+**Q3. Flux vs Argo CD?**
+Same goal, different shape. Flux is a set of small controllers configured entirely
+with Kubernetes objects (no UI by default), a good fit for "everything is code" and
+multi-tenant platform teams. Argo CD is one application with a strong web UI,
+visual diff/sync status and an Application/ApplicationSet model that teams often find
+easier to adopt and demo; it has its own RBAC and SSO. Both do pull-based sync with
+drift correction. I'd choose by team habits: UI and app-centric (Argo CD) versus
+controller and Git-centric (Flux).
+
+**Q4. How do you handle secrets in GitOps?**
+You must never commit plaintext secrets, even to a private repo. Options: encrypt them in
+Git (SOPS with an AWS KMS key, which Flux can decrypt natively; or Sealed Secrets), or keep
+secrets outside Git and sync them in with the External Secrets Operator reading from AWS
+Secrets Manager/SSM. For production I'd use External Secrets with Secrets Manager, so
+Git holds only a reference, rotation happens in AWS, and access is governed by IAM (via IRSA
+or Pod Identity). This demo has no secrets, and the only credential involved, the bootstrap
+token, is used once and not stored in the cluster.
+
+**Q5. How does this compare to the Flux setup you use at work?**
+(Answer generically, no specifics.) The mechanics are the same: a bootstrap that
+commits Flux's own manifests, a `clusters/<env>` entry point, shared bases with
+per-environment overlays, and ordered Kustomizations. At larger scale I'd expect
+more of the following: several clusters and tenants with separate repos or paths and
+RBAC, Helm releases and image automation alongside plain manifests, notifications and
+alerts, and stricter promotion between environments (PRs from dev to prod). This
+project keeps it to one cluster and one overlay so the core loop is clear.
+
+### Commonly breaks at this stage
+`flux get kustomizations` shows `apps` as `False` with a message like
+`dependency 'flux-system/infrastructure' is not ready`, `dry-run failed`, or
+`health check failed`; or bootstrap itself fails with `authentication required` /
+`404 Not Found`.
+Debug (outside in): `flux get all -A` to see which object is not Ready, then
+`kubectl -n flux-system describe kustomization <name>` and `flux logs --level=error`.
+Fix the first failing object, since later ones usually wait on it. A pod rejected by
+Pod Security shows as `violates PodSecurity "restricted"` in `kubectl -n podinfo get events`.
+For bootstrap failures check that the repo exists and is empty-or-seeded, the token is
+scoped to that repo with Administration, Contents (read/write) and Metadata permissions,
+and `$GITHUB_TOKEN` is set in the same shell.

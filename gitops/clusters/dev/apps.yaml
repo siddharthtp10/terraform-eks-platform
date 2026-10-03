@@ -1,0 +1,19 @@
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: apps
+  namespace: flux-system
+spec:
+  interval: 1m
+  retryInterval: 1m
+  timeout: 3m
+  # Don't apply apps until infrastructure is Ready: the podinfo namespace (and its
+  # Pod Security labels) must exist first. Ordering without scripts.
+  dependsOn:
+    - name: infrastructure
+  sourceRef:
+    kind: GitRepository
+    name: flux-system
+  path: ./apps/dev # the ENVIRONMENT OVERLAY for dev
+  prune: true
+  wait: true

@@ -1,0 +1,17 @@
+# ClusterIP only: reachable inside the cluster (and via `kubectl port-forward`).
+# Deliberately NOT a LoadBalancer: that would create a billed AWS load balancer,
+# which also blocks VPC deletion if left behind at destroy time.
+apiVersion: v1
+kind: Service
+metadata:
+  name: podinfo
+  labels:
+    app: podinfo
+spec:
+  type: ClusterIP
+  selector:
+    app: podinfo
+  ports:
+    - name: http
+      port: 9898
+      targetPort: http

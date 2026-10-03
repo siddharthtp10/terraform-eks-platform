@@ -1,0 +1,86 @@
+# podinfo: a small, public demo app by the Flux maintainers
+# (https://github.com/stefanprodan/podinfo). Hand-written here (instead of a remote
+# base) so every field is visible, and hardened so it passes the namespace's
+# "restricted" Pod Security profile and the Trivy scan in CI.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: podinfo
+  labels:
+    app: podinfo
+spec:
+  replicas: 1 # base default; the dev overlay overrides it
+  revisionHistoryLimit: 3
+  selector:
+    matchLabels:
+      app: podinfo
+  template:
+    metadata:
+      labels:
+        app: podinfo
+    spec:
+      # The app never calls the Kubernetes API, so don't mount a token into it.
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        # Numeric IDs: the image's USER is the NAME "app", which Kubernetes can't
+        # verify as non-root. An explicit UID makes runAsNonRoot checkable.
+        runAsUser: 10001
+        runAsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: podinfo
+          # Pinned to an exact version (6.15.0 was the latest release when written).
+          # Even safer: pin the image digest (@sha256:...) so a re-pushed tag can't change it.
+          image: ghcr.io/stefanprodan/podinfo:6.15.0
+          command:
+            - ./podinfo
+            - --port=9898
+            - --port-metrics=9797
+            - --level=info
+          ports:
+            - name: http
+              containerPort: 9898
+            - name: metrics
+              containerPort: 9797
+          env:
+            - name: PODINFO_UI_COLOR
+              value: "#34577c"
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            initialDelaySeconds: 3
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          # Requests = what the scheduler reserves; limits = hard cap. Small, so
+          # several replicas fit on the single t3.medium node.
+          resources:
+            requests:
+              cpu: 50m
+              memory: 32Mi
+            limits:
+              cpu: 250m
+              memory: 128Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            # Read-only root filesystem, so give the app writable scratch space.
+            - name: tmp
+              mountPath: /tmp
+            - name: data
+              mountPath: /data
+      volumes:
+        - name: tmp
+          emptyDir: {}
+        - name: data
+          emptyDir: {}

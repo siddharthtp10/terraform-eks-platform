@@ -1,0 +1,25 @@
+# Flux "Kustomization" (a Flux object, NOT the same as kustomize's kustomization.yaml):
+# it tells the kustomize-controller "keep the cluster equal to what is in Git at
+# <path>". This one applies cluster-wide prerequisites (namespaces) FIRST.
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: infrastructure
+  namespace: flux-system
+spec:
+  # How often Flux re-checks the cluster against Git and corrects drift, even if
+  # Git hasn't changed. 1m is short so the drift demo is quick; production
+  # usually uses 5-10m (plus webhooks for instant sync) to save API calls.
+  interval: 1m
+  retryInterval: 1m
+  timeout: 3m
+  sourceRef:
+    kind: GitRepository
+    name: flux-system # created by `flux bootstrap`
+  path: ./infrastructure/dev
+  # prune: when something is removed from Git, delete it from the cluster too.
+  # Without this, Git and the cluster slowly diverge ("zombie" resources).
+  prune: true
+  # wait: report Ready only after the applied resources are actually healthy,
+  # which is what lets dependsOn below mean "really finished", not "submitted".
+  wait: true
