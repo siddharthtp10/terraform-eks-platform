@@ -19,7 +19,7 @@ Designed to be cheap and **destroyed after use**.
 ## Stages
 
 - [x] 1. Repo skeleton, `.gitignore`, pre-commit
-- [ ] 2. Remote state bootstrap
+- [x] 2. Remote state bootstrap
 - [ ] 3. VPC
 - [ ] 4. EKS
 - [ ] 5. GitHub Actions + OIDC + scanning
