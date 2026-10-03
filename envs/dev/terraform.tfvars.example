@@ -1,0 +1,15 @@
+# Copy to terraform.tfvars (gitignored) and fill in YOUR values:
+#   cp terraform.tfvars.example terraform.tfvars
+# Never commit the real file: it contains your account ID and public IP.
+
+# Your IAM principal (output of: aws sts get-caller-identity). Use the role ARN
+# without the "/aws-reserved/sso.amazonaws.com/..." path if you log in with SSO.
+admin_principal_arn = "arn:aws:iam::<ACCOUNT_ID>:user/<YOUR_USER_OR_ROLE_NAME>"
+
+# Your public IP in CIDR form (find it with: curl -s https://checkip.amazonaws.com)
+api_allowed_cidrs = ["203.0.113.10/32"]
+
+# Optional overrides
+# node_instance_types = ["t3.medium"]
+# node_capacity_type  = "ON_DEMAND"
+# enable_control_plane_logs = false

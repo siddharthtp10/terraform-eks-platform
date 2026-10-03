@@ -139,3 +139,66 @@ IPs", per region) and release unused addresses. For CIDRs, run
 `terraform console` and evaluate `cidrsubnet("10.0.0.0/16", 4, 0)` to see
 exactly what ranges your variables produce. For AZs, run
 `aws ec2 describe-availability-zones --region ap-south-1`.
+
+## Stage 4 - EKS (terraform-aws-modules/eks)
+
+**Q1. IRSA vs EKS Pod Identity: what is the difference?**
+Both give a pod short-lived AWS credentials without stored keys. With IRSA the
+cluster has an OIDC identity provider in IAM; a pod's service account carries a
+role-ARN annotation and the role's trust policy checks the token's `sub`
+(namespace:serviceaccount) and `aud`. The catch: the trust policy embeds the
+cluster's OIDC URL, so every cluster needs its own edit and there is a size limit
+on trust policies. Pod Identity is newer: you create an "association" (cluster +
+namespace + service account -> role) through the EKS API, the role trusts the
+fixed `pods.eks.amazonaws.com` principal, and an agent on the node hands out
+credentials. It's simpler to reuse across clusters. I used IRSA here because it
+works everywhere (including Fargate and older setups) and shows the moving parts.
+
+**Q2. Access entries vs the `aws-auth` ConfigMap?**
+`aws-auth` was a YAML ConfigMap in `kube-system` mapping IAM roles to Kubernetes
+groups. A typo could lock everyone out, and the only way to fix it was via the
+cluster creator's hidden admin. Access entries move that mapping into the EKS API:
+each IAM principal gets an entry plus AWS-managed access policies (for example
+cluster-admin or read-only), scoped to the cluster or to namespaces. It's
+auditable in CloudTrail, manageable in Terraform, and recoverable without
+kubectl. I set `authentication_mode = "API"` so only access entries count.
+
+**Q3. Managed node groups vs self-managed?**
+In a managed node group AWS creates the Auto Scaling group, picks the EKS-optimised
+AMI, and does rolling updates with cordon/drain for you. Self-managed nodes are
+EC2/ASGs you build and patch yourself: more control (custom AMIs, odd kernels,
+special bootstrap) and more toil. I use managed unless I have a hard requirement,
+and would look at Karpenter or EKS Auto Mode for real scaling.
+
+**Q4. Why put nodes in private subnets?**
+Nodes have no public IP, so nothing on the internet can reach the kubelet or your
+workloads directly; all inbound traffic must come through a load balancer you
+chose to create in the public subnets. Outbound traffic (images, AWS APIs) goes
+through the NAT gateway. It's a smaller attack surface for the price of the NAT.
+Note the control-plane endpoint is a separate decision (public restricted to my IP
+here, private endpoint also on for in-VPC traffic).
+
+**Q5. How does this differ from your CloudFormation experience?**
+The EKS resources are the same AWS APIs. The differences: a community module
+gives me a tested, versioned building block where in CloudFormation I'd write or
+copy a large template or nested stack; `terraform plan` shows an exact diff before
+I touch anything (CloudFormation change sets are comparable but optional and
+coarser); state is mine to manage (S3) instead of belonging to a stack; and I can
+read values between configs (VPC outputs feeding EKS) with plain references
+rather than exports/imports. Failure handling also differs: Terraform stops
+and leaves the partial result in state, where CloudFormation rolls back.
+
+### Commonly breaks at this stage
+`kubectl` returns `error: You must be logged in to the server (Unauthorized)`, or
+node group creation hangs and fails with `NodeCreationFailure`.
+- Unauthorized: the access entry's `principal_arn` doesn't match the identity you
+  call kubectl as. With AWS SSO the entry needs the plain role ARN
+  `arn:aws:iam::<id>:role/AWSReservedSSO_<...>` WITHOUT the
+  `/aws-reserved/sso.amazonaws.com/<region>/` path that `get-caller-identity`
+  shows. Debug: `aws sts get-caller-identity`, compare with
+  `aws eks list-access-entries --cluster-name eks-dev`, fix the variable, re-apply.
+- Can't connect at all (timeout): your public IP changed or isn't in
+  `api_allowed_cidrs`. Re-check `curl -s https://checkip.amazonaws.com` and re-apply.
+- NodeCreationFailure: nodes can't reach the API or pull images. Check the NAT
+  gateway and private route table from Stage 3, then
+  `aws eks describe-nodegroup ... --query nodegroup.health`.
