@@ -77,8 +77,11 @@ resource "aws_s3_bucket_versioning" "state" {
 # Scanner suppression (Trivy AWS-0132 "use a customer managed key"): ACCEPTED RISK.
 # SSE-S3 is a deliberate choice for this cost-conscious demo bucket (reasoning and
 # the cost of KMS are in the comment above). Scoped to this one resource, with an
-# expiry so the decision is revisited instead of forgotten.
-#trivy:ignore:AVD-AWS-0132:exp=2027-06-30
+# expiry so the decision is revisited instead of forgotten. NOTE the syntax: Trivy
+# only honours the expiry as ":exp:DATE" (colon). The "exp=DATE" form is silently
+# ignored and makes the suppression permanent. The ignore line must sit directly
+# above the resource, with no comment between them.
+#trivy:ignore:AVD-AWS-0132:exp:2027-06-30
 resource "aws_s3_bucket_server_side_encryption_configuration" "state" {
   bucket = aws_s3_bucket.state.id
 

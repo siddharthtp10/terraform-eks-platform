@@ -28,6 +28,16 @@ If your AWS account already has a GitHub OIDC provider, set `create_oidc_provide
 | `ADMIN_PRINCIPAL_ARN` | the same value as `admin_principal_arn` in `envs/dev/terraform.tfvars` |
 | `API_ALLOWED_CIDRS` | JSON list, e.g. `["203.0.113.10/32"]` |
 
+**Same page > Variables tab > Repository variables** (not secret; one source of truth for every workflow):
+
+| Variable | Value |
+|---|---|
+| `AWS_REGION` | the region of the platform and state bucket, e.g. `ap-south-1` |
+| `TF_STATE_KEY` | the state key of `envs/dev`, `envs/dev/terraform.tfstate` unless you changed it. It must equal `state_key` in `ci-access` (its default is the same). |
+
+The workflows stop with a clear error if either variable is missing. Also keep `cluster_name` identical in
+`ci-access` and `envs/dev` (both default to `eks-dev`): the apply role's permissions are scoped to that name.
+
 **Settings > Environments > New environment** named `dev-apply`:
 
 - Required reviewers: add yourself. (Solo repo: leave "Prevent self-review" OFF.)
