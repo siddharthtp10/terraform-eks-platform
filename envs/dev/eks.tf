@@ -9,6 +9,31 @@
 
 data "aws_partition" "current" {}
 
+# -----------------------------------------------------------------------------
+# SCANNER SUPPRESSIONS (Trivy): two ACCEPTED RISKS, reviewed and time-boxed.
+# Both findings are located inside the community module, which is why the ignore
+# comments sit on this module call. Each ignore names ONE rule and expires on the
+# date shown, after which the scan fails again and forces a re-decision.
+#
+# AWS-0040 (CRITICAL) "Public cluster access is enabled": the API endpoint is
+#   deliberately public so kubectl and `flux bootstrap` work from a laptop with no
+#   VPN. It is NOT open to the internet: access is limited to var.api_allowed_cidrs
+#   (validated to reject 0.0.0.0/0), and every call still needs IAM authentication
+#   plus an EKS access entry. Trivy cannot see the CIDR restriction. Production
+#   answer: a fully private endpoint reached over VPN/SSM.
+#
+# AWS-0104 (CRITICAL) "Security group rule allows unrestricted egress": this is the
+#   module's default "egress_all" rule on the NODE security group. Nodes sit in
+#   private subnets and must reach the internet through the NAT gateway to pull
+#   images and call AWS APIs, and inbound traffic is still closed. Production
+#   answer: restrict egress to VPC endpoints and known CIDRs, or add a proxy.
+#
+# SYNTAX WARNING: use ":exp:DATE" (colon). "exp=DATE" is silently ignored and would
+# make the suppression permanent. Keep the ignore lines directly above `module`;
+# a comment between them and the block disables the suppression.
+# -----------------------------------------------------------------------------
+#trivy:ignore:AVD-AWS-0040:exp:2027-03-31
+#trivy:ignore:AVD-AWS-0104:exp:2027-03-31
 module "eks" {
   source = "terraform-aws-modules/eks/aws"
 

@@ -283,14 +283,17 @@ low-risk stacks a real team would auto-apply on merge, filtered by path, with it
 role. Also, apply runs from a saved plan file so what is applied is what was planned.
 
 **Q32. What did the security scanner catch?**
-Trivy flagged one HIGH finding, AWS-0132, on the state bucket: it uses SSE-S3 rather
-than a customer-managed KMS key. That was a deliberate cost trade-off, so I suppressed
-it in code next to the decision, scoped to that one resource, with a written reason and
-an expiry date, instead of lowering the severity gate. I also proved the gate works by
-feeding it a deliberately bad config (SSH open to 0.0.0.0/0) and checking it fails the
-build. The point I make in interviews: a scanner finding is a prompt to decide, and
-every suppression should be explicit, justified and time-boxed.
-
+Three accepted findings and one bug of mine. Accepted, each suppressed in code with a written reason and an
+expiry date: AWS-0132 (the state bucket uses SSE-S3, not a customer-managed KMS key: a cost trade-off), AWS-0040
+(the EKS API endpoint is public, but limited to my IP and still IAM-authenticated, so a laptop can run kubectl and
+Flux bootstrap without a VPN) and AWS-0104 (the node security group allows all egress, because private nodes must
+reach the NAT to pull images). The bug: my very first CI run failed because I ran `terraform init` before the scan,
+so Trivy also scanned the community module's example manifests in `.terraform/` and reported HIGH findings in code
+that isn't mine. I fixed it by scanning before `init` and skipping `.terraform`, and I did not weaken the severity
+gate. Two lessons I'd repeat in an interview: a scanner finding is a prompt to decide, and every suppression should
+be explicit, justified and time-boxed. And test the suppression syntax: Trivy only honours expiry as `:exp:DATE`;
+the form `exp=DATE` is silently ignored and makes the suppression permanent, which I caught only by feeding it a
+past date and checking the scan failed.
 **Q33. A secret was committed or leaked: what do you do?**
 Revoke or rotate it FIRST (deactivate the key or credential in AWS/GitHub); deleting
 the commit does not help because it's already been copied and scanned by bots. Then

@@ -208,7 +208,21 @@ Explorer, filtered by the `Project=terraform-eks-platform` tag.
 - **Cluster hardening.** Secrets encrypted with a KMS key; nodes private; the API allow-list rejects `0.0.0.0/0`; the sample app
   namespace enforces the `restricted` Pod Security profile and the manifests pass the same HIGH/CRITICAL Trivy gate as the Terraform.
 - **Scanner gate.** Trivy fails the PR on HIGH/CRITICAL findings. Accepted risks are suppressed in code with a justification and an
-  expiry, never by weakening the gate.
+  expiry, never by weakening the gate. They are listed below.
+
+### Accepted scanner findings
+
+Each is a deliberate demo trade-off, suppressed next to the code with a written reason and an expiry (after which the scan fails
+again and forces a re-decision). Search for `trivy:ignore`.
+
+| Rule | Where | Why it is accepted | What production would do | Expires |
+|---|---|---|---|---|
+| AWS-0132 (HIGH) S3 not encrypted with a customer-managed key | `bootstrap/main.tf` | SSE-S3 is free and enough for a demo state bucket; KMS adds a monthly key fee and IAM overhead. | Customer-managed KMS key | 2027-06-30 |
+| AWS-0040 (CRITICAL) public EKS API endpoint | `envs/dev/eks.tf` | Needed so `kubectl` and `flux bootstrap` work from a laptop without a VPN. Not open to the world: limited to `api_allowed_cidrs` (`0.0.0.0/0` is rejected), and IAM auth plus an access entry are still required. Trivy cannot see the CIDR limit. | Fully private endpoint via VPN or SSM | 2027-03-31 |
+| AWS-0104 (CRITICAL) node security group egress to `0.0.0.0/0` | `envs/dev/eks.tf` | The module's default rule. Nodes are private and must reach the NAT to pull images and call AWS APIs; inbound stays closed. | Egress limited to VPC endpoints and known CIDRs | 2027-03-31 |
+
+Not gated, not suppressed (LOW/MEDIUM): `AWS-0089` bucket access logging, `KSV-0110` (the namespace is set by the Kustomize overlay),
+`KSV-0125` (the sample image comes from `ghcr.io`, not an allow-listed registry).
 
 ## What I would do differently in production
 

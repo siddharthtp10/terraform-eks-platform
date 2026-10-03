@@ -26,7 +26,8 @@ concurrency:
 env:
   TF_VERSION: "1.16.5"
   TF_IN_AUTOMATION: "true"
-  AWS_REGION: ap-south-1
+  # Region and state key come from the repository variables AWS_REGION and
+  # TF_STATE_KEY (the same single source terraform-pr.yml uses), not from this file.
 
 jobs:
   apply:
@@ -45,10 +46,22 @@ jobs:
     env:
       TF_VAR_admin_principal_arn: ${{ secrets.ADMIN_PRINCIPAL_ARN }}
       TF_VAR_api_allowed_cidrs: ${{ secrets.API_ALLOWED_CIDRS }}
+      AWS_REGION: ${{ vars.AWS_REGION }}
+      TF_STATE_KEY: ${{ vars.TF_STATE_KEY }}
+      TF_VAR_aws_region: ${{ vars.AWS_REGION }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+
+      - name: Require repository variables
+        run: |
+          for v in AWS_REGION TF_STATE_KEY; do
+            if [ -z "${!v}" ]; then
+              echo "::error::Repository variable $v is not set (Settings > Secrets and variables > Actions > Variables). See docs/ci-setup.md."
+              exit 1
+            fi
+          done
 
       - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
         with:
@@ -74,7 +87,7 @@ jobs:
         run: |
           terraform -chdir=envs/dev init -input=false \
             -backend-config="bucket=${TF_STATE_BUCKET}" \
-            -backend-config="key=envs/dev/terraform.tfstate" \
+            -backend-config="key=${TF_STATE_KEY}" \
             -backend-config="region=${AWS_REGION}"
 
       # Plan and apply in the SAME job from a saved plan file, so what runs is exactly
