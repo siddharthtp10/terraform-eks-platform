@@ -1,38 +1,85 @@
 # Interview notes
 
-Plain-language Q&A per stage. Read the answers out loud until they sound natural.
+One study list for the whole project: **question, then a short plain-language answer**. Read the answers out loud until
+they sound natural, then try the questions cold. Each stage ends with something that commonly breaks and how to debug it,
+and there is a cheat-sheet of those at the bottom.
+
+**60-second pitch.** "I built a small production-style platform on AWS with Terraform and made it cheap enough to
+destroy after every session. State lives in a versioned, encrypted S3 bucket with native locking, created by a one-off
+bootstrap config. A community-module VPC feeds an EKS cluster with private nodes, access entries and an IRSA example.
+GitHub Actions authenticates to AWS with OIDC, so there are no stored keys: pull requests run format, validate, lint, a
+Trivy scan that fails on high severity, and a read-only plan; apply is manual behind an approval. Flux pulls a sample app
+from a separate GitOps repo and corrects drift. Every decision has a cost or security trade-off I can explain."
+
+## Contents
+
+- [Core Terraform concepts](#core-terraform-concepts) (Q1-Q8)
+- [Stage 1 - Repo skeleton, .gitignore, pre-commit](#stage-1---repo-skeleton-gitignore-pre-commit) (Q9-Q13)
+- [Stage 2 - Remote state bootstrap](#stage-2---remote-state-bootstrap) (Q14-Q18)
+- [Stage 3 - VPC (terraform-aws-modules/vpc)](#stage-3---vpc-terraform-aws-modulesvpc) (Q19-Q23)
+- [Stage 4 - EKS (terraform-aws-modules/eks)](#stage-4---eks-terraform-aws-moduleseks) (Q24-Q28)
+- [Stage 5 - GitHub Actions, OIDC, scanning](#stage-5---github-actions-oidc-scanning) (Q29-Q33)
+- [Stage 6 - Flux GitOps](#stage-6---flux-gitops) (Q34-Q38)
+- [Debugging cheat-sheet](#debugging-cheat-sheet)
+
+## Core Terraform concepts
+
+**Q1. What is Terraform state, and what actually happens on `plan` and `apply`?**
+State is Terraform's record of which real resources it created for which pieces of config (their IDs and attributes). `plan` reads your config, refreshes the state against the real world, builds a dependency graph, and shows the difference (create / change / destroy). `apply` executes that diff in dependency order, in parallel where it can, and writes the result back to state. Without state Terraform couldn't know that `aws_vpc.this` is vpc-123 and would try to create it again. (Here: Stage 2 puts it in S3.)
+
+**Q2. What happens on a state conflict or a stuck lock, and how do you fix it?**
+Locking makes the second concurrent run fail fast with "Error acquiring the state lock", showing who holds it and when it started, instead of two runs overwriting each other. If a run was killed and left the lock behind, first confirm nobody is really running, then `terraform force-unlock <LOCK_ID>`. With S3 native locking the lock is just a `<key>.tflock` object. If state itself was damaged, restore the previous object version from the versioned bucket. Never edit state by hand; use `terraform state` subcommands.
+
+**Q3. `count` vs `for_each`: when do you use which?**
+Both create multiple instances. `count` indexes by position, so removing the first item of a list shifts everything after it and Terraform wants to destroy and recreate resources. `for_each` keys instances by a stable string or map key, so adding or removing one entry only touches that entry. I use `for_each` for anything that isn't an identical-copies-by-number situation. In this repo the VPC module's subnets are driven by a list of CIDRs from `cidrsubnet()`, and the EKS node groups and add-ons are maps.
+
+**Q4. How do you version-pin providers and modules, and what is the lock file?**
+Providers use a constraint like `~> 6.67` (accept minor/patch, never a new major) in `required_providers`, and `.terraform.lock.hcl` records the exact version and checksums chosen at `init`, so every laptop and CI run installs identical plugins. You commit the lock file. Modules have no lock file, so I pin them to an exact version (`version = "6.7.3"`) to get reproducible builds; upgrades are deliberate pull requests.
+
+**Q5. What is drift, and how do you detect and handle it?**
+Drift is when real infrastructure no longer matches state/config, usually because someone changed it in the console. `terraform plan` refreshes and shows it as a proposed change back to the config; `plan -refresh-only` shows only the drift. You then either re-apply to revert it, or update the config to accept it. To bring existing resources under Terraform you `import` them (an `import` block in 1.5+). A scheduled `plan` in CI is the usual way to detect drift early. (Flux does the same job for Kubernetes objects.)
+
+**Q6. What are `lifecycle` rules and `depends_on`? Give examples from your code.**
+`depends_on` adds an explicit ordering when Terraform can't see a dependency through references; here the S3 bucket policy waits for the public-access block so S3 doesn't reject concurrent changes. `lifecycle` changes how a resource is managed: `prevent_destroy = true` makes any plan that would delete the state bucket fail; `create_before_destroy` swaps replacements without downtime; `ignore_changes` stops fighting an external system that edits a field. Most dependencies should be implicit, via references.
+
+**Q7. Variables, locals and outputs: what are they for, and how do you validate input?**
+Variables are inputs (the module's parameters), locals are named expressions to avoid repetition (the subnet CIDR lists), outputs publish values to other configs or to humans. `validation` blocks reject bad input at plan time with a clear message (the bucket name format, rejecting `0.0.0.0/0` for the API allow-list). Mark values `sensitive` to hide them in output, but remember they are still stored in state.
+
+**Q8. Workspaces vs separate directories for environments?**
+Workspaces give several state files from the same code and directory, which is easy to misuse because the active workspace is invisible and environments usually differ in more than a variable. I prefer one directory per environment (`envs/dev`, later `envs/prod`) with its own state key and its own variables, sharing code through modules. That makes each environment explicit in the file tree, in code review and in CI.
 
 ## Stage 1 - Repo skeleton, .gitignore, pre-commit
 
-**Q1. Why split into `bootstrap/` and `envs/dev/` instead of one folder?**
+
+**Q9. Why split into `bootstrap/` and `envs/dev/` instead of one folder?**
 Terraform needs somewhere to store state, but the bucket for state must itself be
 created by something. `bootstrap/` creates the bucket using local state once;
 `envs/dev/` then uses that bucket as its remote backend. Separate folders also
 mean separate state files, so a mistake in the platform can't touch the bucket.
 
-**Q2. What must never be committed to git, and why?**
+**Q10. What must never be committed to git, and why?**
 `*.tfstate` (contains resource details and often secrets in plaintext),
 `*.tfvars` (environment-specific values), `.terraform/` (downloaded plugins,
 huge and reproducible) and kubeconfigs (cluster credentials).
 
-**Q3. Should `.terraform.lock.hcl` be committed?**
+**Q11. Should `.terraform.lock.hcl` be committed?**
 Yes. It records exact provider versions and checksums, so CI and every laptop
 download identical plugins. Ignoring it is a common mistake.
 
-**Q4. What do `fmt`, `validate` and `tflint` each catch?**
+**Q12. What do `fmt`, `validate` and `tflint` each catch?**
 `fmt` = style only. `validate` = syntax and internal consistency (a reference to
 an undeclared variable). `tflint` = deeper lint and provider-aware rules (unused
 variables, invalid instance types, missing version constraints). None of them
 talk to AWS or prove the plan will succeed; only `plan` does.
 
-**Q5. How does this differ from your CloudFormation workflow?**
+**Q13. How does this differ from your CloudFormation workflow?**
 CloudFormation stores state for you inside the service (the stack). Terraform
 makes *you* own state: where it lives, who can read it, how it is locked. In
 return you get one tool across clouds, a real `plan` diff before every change,
 and a module/registry ecosystem. The repo structure is also my choice rather
 than "one template per stack".
 
-### Commonly breaks at this stage
+### Commonly breaks, and how to debug it
 `terraform_validate` fails in pre-commit with *"Module not installed"* or
 *"Missing required provider"* because nothing has been `init`-ed yet.
 Debug: run `terraform init -backend=false` in the failing directory, then re-run
@@ -40,20 +87,21 @@ Debug: run `terraform init -backend=false` in the failing directory, then re-run
 
 ## Stage 2 - Remote state bootstrap
 
-**Q1. Why use remote state instead of the default local `terraform.tfstate`?**
+
+**Q14. Why use remote state instead of the default local `terraform.tfstate`?**
 State is Terraform's record of what it built. On a laptop it is a single copy
 that one person owns: lose the laptop and Terraform forgets your infrastructure;
 a teammate (or the CI pipeline) can't run it at all. Remote state in S3 is shared,
 backed up, encrypted and access-controlled, which is the prerequisite for CI/CD.
 
-**Q2. What does state locking prevent?**
+**Q15. What does state locking prevent?**
 Two runs writing state at the same time. Without a lock, two `apply`s each read
 the same starting state, make different changes, and the last writer silently
 overwrites the first, leaving real resources that Terraform no longer knows about
 (orphans) or thinks exist when they don't. With locking the second run fails fast
 with "Error acquiring the state lock" and shows who holds it.
 
-**Q3. S3 native locking vs a DynamoDB lock table?**
+**Q16. S3 native locking vs a DynamoDB lock table?**
 Before Terraform 1.10 the S3 backend needed a separate DynamoDB table for locks.
 Now `use_lockfile = true` makes Terraform write a `<key>.tflock` object next to
 the state using an S3 conditional write ("create only if it doesn't exist"), so
@@ -61,13 +109,13 @@ only one writer can succeed. Fewer resources, no extra table to pay for or give
 IAM permissions on. (The DynamoDB method is deprecated.) The CI role later needs
 S3 permission on that `.tflock` object too, not just on the state file.
 
-**Q4. Why turn on versioning and encryption for the state bucket?**
+**Q17. Why turn on versioning and encryption for the state bucket?**
 Versioning is the undo button: if state is corrupted or a bad run overwrites it,
 restore the previous version. Encryption (plus blocking public access and denying
 non-TLS requests) matters because state routinely contains secrets such as
 passwords and keys in plaintext, so it is one of the most sensitive files you own.
 
-**Q5. What happens if the bootstrap's own local state is lost?**
+**Q18. What happens if the bootstrap's own local state is lost?**
 The bucket and the platform state inside it are untouched; only Terraform's
 bookkeeping for the *bucket* is gone. Recovery is to re-run bootstrap with the
 same variables and `terraform import` the existing bucket and its sub-resources
@@ -77,7 +125,7 @@ tiny, why the bucket has `prevent_destroy`, and why the bucket name is recorded
 somewhere safe. A common alternative is to migrate bootstrap's state into the
 bucket afterwards; the trade-off is a slightly circular dependency.
 
-### Commonly breaks at this stage
+### Commonly breaks, and how to debug it
 `apply` fails with `BucketAlreadyExists` (the name is taken by someone else) or
 `BucketAlreadyOwnedByYou` (you made it earlier), or init fails with `Invalid
 security token` / region errors.
@@ -87,14 +135,15 @@ unique bucket name. Re-run `terraform plan`; S3 names are global, not per-accoun
 
 ## Stage 3 - VPC (terraform-aws-modules/vpc)
 
-**Q1. What makes a subnet "public" vs "private", and how does a route table do it?**
+
+**Q19. What makes a subnet "public" vs "private", and how does a route table do it?**
 There is no "public" flag on a subnet. A subnet is public if its route table has a
 route `0.0.0.0/0 -> Internet Gateway`; it is private if it doesn't (its default
 route points at a NAT gateway instead, or nowhere). The route table decides where
 packets go, and that is the whole difference. Instances in a public subnet also
 need a public IP to be reachable; ours don't get one automatically.
 
-**Q2. Why do we need a NAT gateway, and what does it cost?**
+**Q20. Why do we need a NAT gateway, and what does it cost?**
 Worker nodes live in private subnets with no public IPs, but they must still pull
 container images and call AWS APIs. A NAT gateway sits in a public subnet and
 lets private resources start outbound connections while blocking unsolicited
@@ -103,7 +152,7 @@ exists regardless of traffic, plus per GB processed (see the README Cost note).
 That's why the S3 gateway endpoint matters: it is free and sends S3 traffic
 (including ECR image layers) around the NAT.
 
-**Q3. Why does EKS need specific tags on subnets?**
+**Q21. Why does EKS need specific tags on subnets?**
 Kubernetes doesn't know which subnets to use for load balancers; it finds them
 by tag. `kubernetes.io/role/elb=1` marks subnets for internet-facing load
 balancers, `kubernetes.io/role/internal-elb=1` marks internal ones, and
@@ -111,7 +160,7 @@ balancers, `kubernetes.io/role/internal-elb=1` marks internal ones, and
 Balancer Controller reads these tags. Without them, a Service of type
 LoadBalancer or an Ingress fails with "unable to find suitable subnets".
 
-**Q4. One NAT gateway vs one per AZ?**
+**Q22. One NAT gateway vs one per AZ?**
 One is cheaper (you pay the fixed hourly cost once), but it's a single point of
 failure: if its AZ goes down, nodes in the other AZ lose outbound internet, and
 cross-AZ traffic to reach it is billed. One per AZ costs more but each AZ is
@@ -119,7 +168,7 @@ independent and traffic stays local. I use one for a destroy-after-use demo
 (`single_nat_gateway = true`) and would use one per AZ in production. It is a
 single variable, which is the point of using a module.
 
-**Q5. How does `cidrsubnet()` work?**
+**Q23. How does `cidrsubnet()` work?**
 `cidrsubnet(prefix, newbits, netnum)` splits a network into smaller ones.
 `newbits` is how many bits are added to the prefix length and `netnum` picks which
 of the resulting 2^newbits blocks you want. `cidrsubnet("10.0.0.0/16", 4, 1)` gives
@@ -128,7 +177,7 @@ Deriving subnets from the VPC CIDR avoids typos and overlaps, and it scales
 with `azs_count`. (CloudFormation has `Fn::Cidr`, but Terraform lets you loop
 and compute with ordinary expressions.)
 
-### Commonly breaks at this stage
+### Commonly breaks, and how to debug it
 `apply` fails with `AddressLimitExceeded` (no free Elastic IPs for the NAT
 gateway), or a subnet error such as `InvalidSubnet.Conflict` / CIDR overlap if
 you changed `vpc_cidr` against an existing VPC, or `InvalidParameterValue` when
@@ -142,7 +191,8 @@ exactly what ranges your variables produce. For AZs, run
 
 ## Stage 4 - EKS (terraform-aws-modules/eks)
 
-**Q1. IRSA vs EKS Pod Identity: what is the difference?**
+
+**Q24. IRSA vs EKS Pod Identity: what is the difference?**
 Both give a pod short-lived AWS credentials without stored keys. With IRSA the
 cluster has an OIDC identity provider in IAM; a pod's service account carries a
 role-ARN annotation and the role's trust policy checks the token's `sub`
@@ -154,7 +204,7 @@ fixed `pods.eks.amazonaws.com` principal, and an agent on the node hands out
 credentials. It's simpler to reuse across clusters. I used IRSA here because it
 works everywhere (including Fargate and older setups) and shows the moving parts.
 
-**Q2. Access entries vs the `aws-auth` ConfigMap?**
+**Q25. Access entries vs the `aws-auth` ConfigMap?**
 `aws-auth` was a YAML ConfigMap in `kube-system` mapping IAM roles to Kubernetes
 groups. A typo could lock everyone out, and the only way to fix it was via the
 cluster creator's hidden admin. Access entries move that mapping into the EKS API:
@@ -163,14 +213,14 @@ cluster-admin or read-only), scoped to the cluster or to namespaces. It's
 auditable in CloudTrail, manageable in Terraform, and recoverable without
 kubectl. I set `authentication_mode = "API"` so only access entries count.
 
-**Q3. Managed node groups vs self-managed?**
+**Q26. Managed node groups vs self-managed?**
 In a managed node group AWS creates the Auto Scaling group, picks the EKS-optimised
 AMI, and does rolling updates with cordon/drain for you. Self-managed nodes are
 EC2/ASGs you build and patch yourself: more control (custom AMIs, odd kernels,
 special bootstrap) and more toil. I use managed unless I have a hard requirement,
 and would look at Karpenter or EKS Auto Mode for real scaling.
 
-**Q4. Why put nodes in private subnets?**
+**Q27. Why put nodes in private subnets?**
 Nodes have no public IP, so nothing on the internet can reach the kubelet or your
 workloads directly; all inbound traffic must come through a load balancer you
 chose to create in the public subnets. Outbound traffic (images, AWS APIs) goes
@@ -178,7 +228,7 @@ through the NAT gateway. It's a smaller attack surface for the price of the NAT.
 Note the control-plane endpoint is a separate decision (public restricted to my IP
 here, private endpoint also on for in-VPC traffic).
 
-**Q5. How does this differ from your CloudFormation experience?**
+**Q28. How does this differ from your CloudFormation experience?**
 The EKS resources are the same AWS APIs. The differences: a community module
 gives me a tested, versioned building block where in CloudFormation I'd write or
 copy a large template or nested stack; `terraform plan` shows an exact diff before
@@ -188,7 +238,7 @@ read values between configs (VPC outputs feeding EKS) with plain references
 rather than exports/imports. Failure handling also differs: Terraform stops
 and leaves the partial result in state, where CloudFormation rolls back.
 
-### Commonly breaks at this stage
+### Commonly breaks, and how to debug it
 `kubectl` returns `error: You must be logged in to the server (Unauthorized)`, or
 node group creation hangs and fails with `NodeCreationFailure`.
 - Unauthorized: the access entry's `principal_arn` doesn't match the identity you
@@ -205,7 +255,8 @@ node group creation hangs and fails with `NodeCreationFailure`.
 
 ## Stage 5 - GitHub Actions, OIDC, scanning
 
-**Q1. Why is OIDC better than storing AWS access keys in GitHub secrets?**
+
+**Q29. Why is OIDC better than storing AWS access keys in GitHub secrets?**
 A stored key is long-lived: it works from anywhere until someone rotates it, and if
 it leaks (a log, a compromised action, a former contributor) the attacker has
 standing access. With OIDC each job asks GitHub for a signed token that is valid for
@@ -214,7 +265,7 @@ on their own. Nothing secret is stored in GitHub, so there is nothing to rotate 
 AWS decides whether to trust the job by checking the token signature and the role's
 trust-policy conditions.
 
-**Q2. How does the `sub` claim stop another repository from assuming your role?**
+**Q30. How does the `sub` claim stop another repository from assuming your role?**
 Every repo on GitHub gets valid tokens from the same issuer, so signature checking
 alone proves nothing. The `sub` claim names the exact repo and context, for example
 `repo:OWNER/REPO:pull_request`. The trust policy requires `sub` to equal that string
@@ -223,7 +274,7 @@ apply role is stricter: it requires `...:environment:dev-apply`, so only a job r
 in the protected environment (reviewer approval, main branch only) can get write
 access. Leaving the `sub` condition off is the classic OIDC mistake.
 
-**Q3. Plan on PR vs apply on merge: what is the reasoning, and why not auto-apply here?**
+**Q31. Plan on PR vs apply on merge: what is the reasoning, and why not auto-apply here?**
 Plan on PR gives reviewers the exact diff before anything changes, and it runs with a
 read-only role so a bad PR can't break anything. Apply after merge keeps `main` and
 reality in sync, with an audit trail. For this repo I do NOT auto-apply: the EKS
@@ -231,7 +282,7 @@ stack costs money every hour, so apply is manual and needs an approver. For chea
 low-risk stacks a real team would auto-apply on merge, filtered by path, with its own
 role. Also, apply runs from a saved plan file so what is applied is what was planned.
 
-**Q4. What did the security scanner catch?**
+**Q32. What did the security scanner catch?**
 Trivy flagged one HIGH finding, AWS-0132, on the state bucket: it uses SSE-S3 rather
 than a customer-managed KMS key. That was a deliberate cost trade-off, so I suppressed
 it in code next to the decision, scoped to that one resource, with a written reason and
@@ -240,7 +291,7 @@ feeding it a deliberately bad config (SSH open to 0.0.0.0/0) and checking it fai
 build. The point I make in interviews: a scanner finding is a prompt to decide, and
 every suppression should be explicit, justified and time-boxed.
 
-**Q5. A secret was committed or leaked: what do you do?**
+**Q33. A secret was committed or leaked: what do you do?**
 Revoke or rotate it FIRST (deactivate the key or credential in AWS/GitHub); deleting
 the commit does not help because it's already been copied and scanned by bots. Then
 check CloudTrail for what it was used for, remove it from history if needed
@@ -249,7 +300,7 @@ prevention: pre-commit secret detection, GitHub secret scanning with push protec
 and OIDC so there are no long-lived keys to leak. The best answer to "leaked AWS key"
 is that this pipeline has none.
 
-### Commonly breaks at this stage
+### Commonly breaks, and how to debug it
 The `configure-aws-credentials` step fails with `Not authorized to perform
 sts:AssumeRoleWithWebIdentity`.
 Debug: the trust policy and the token disagree. Check, in order: (1) the job has
@@ -264,7 +315,8 @@ CloudTrail and add exactly that action to `ci-access/permissions.tf`, then re-ap
 
 ## Stage 6 - Flux GitOps
 
-**Q1. Push vs pull deployment: what is the difference?**
+
+**Q34. Push vs pull deployment: what is the difference?**
 In push, a CI job runs `kubectl apply` or `helm upgrade` against the cluster, so CI
 needs cluster credentials and nothing notices if someone changes the cluster by hand
 afterwards. In pull (GitOps) an agent INSIDE the cluster (Flux) watches a Git repo
@@ -273,7 +325,7 @@ holds cluster admin keys. Git becomes the single source of truth, history is the
 log, and a rollback is `git revert`. The trade-off is another component to run and a
 slight delay (the sync interval).
 
-**Q2. How does Flux reconcile?**
+**Q35. How does Flux reconcile?**
 `source-controller` fetches the Git repo (a `GitRepository` object) and publishes the
 revision. `kustomize-controller` runs each Flux `Kustomization`: it builds the manifests
 at a path, applies them with server-side apply, waits for health if `wait: true`, and
@@ -282,7 +334,7 @@ they differ, even because someone ran `kubectl scale`, it re-applies Git's versi
 (drift correction). `prune: true` deletes things you removed from Git, and `dependsOn`
 orders Kustomizations (apps only after infrastructure is Ready).
 
-**Q3. Flux vs Argo CD?**
+**Q36. Flux vs Argo CD?**
 Same goal, different shape. Flux is a set of small controllers configured entirely
 with Kubernetes objects (no UI by default), a good fit for "everything is code" and
 multi-tenant platform teams. Argo CD is one application with a strong web UI,
@@ -291,7 +343,7 @@ easier to adopt and demo; it has its own RBAC and SSO. Both do pull-based sync w
 drift correction. I'd choose by team habits: UI and app-centric (Argo CD) versus
 controller and Git-centric (Flux).
 
-**Q4. How do you handle secrets in GitOps?**
+**Q37. How do you handle secrets in GitOps?**
 You must never commit plaintext secrets, even to a private repo. Options: encrypt them in
 Git (SOPS with an AWS KMS key, which Flux can decrypt natively; or Sealed Secrets), or keep
 secrets outside Git and sync them in with the External Secrets Operator reading from AWS
@@ -300,7 +352,7 @@ Git holds only a reference, rotation happens in AWS, and access is governed by I
 or Pod Identity). This demo has no secrets, and the only credential involved, the bootstrap
 token, is used once and not stored in the cluster.
 
-**Q5. How does this compare to the Flux setup you use at work?**
+**Q38. How does this compare to the Flux setup you use at work?**
 (Answer generically, no specifics.) The mechanics are the same: a bootstrap that
 commits Flux's own manifests, a `clusters/<env>` entry point, shared bases with
 per-environment overlays, and ordered Kustomizations. At larger scale I'd expect
@@ -309,7 +361,7 @@ RBAC, Helm releases and image automation alongside plain manifests, notification
 alerts, and stricter promotion between environments (PRs from dev to prod). This
 project keeps it to one cluster and one overlay so the core loop is clear.
 
-### Commonly breaks at this stage
+### Commonly breaks, and how to debug it
 `flux get kustomizations` shows `apps` as `False` with a message like
 `dependency 'flux-system/infrastructure' is not ready`, `dry-run failed`, or
 `health check failed`; or bootstrap itself fails with `authentication required` /
@@ -321,3 +373,17 @@ Pod Security shows as `violates PodSecurity "restricted"` in `kubectl -n podinfo
 For bootstrap failures check that the repo exists and is empty-or-seeded, the token is
 scoped to that repo with Administration, Contents (read/write) and Metadata permissions,
 and `$GITHUB_TOKEN` is set in the same shell.
+
+## Debugging cheat-sheet
+
+| Stage | Symptom | First thing to check |
+|---|---|---|
+| 1 Skeleton | `terraform_validate` hook: "Module not installed" / "Missing required provider" | `terraform init -backend=false` in the directory the hook names |
+| 2 State | `BucketAlreadyExists`, `Invalid security token`, region redirect | `aws sts get-caller-identity`; unique bucket name; same region in tfvars and backend.hcl |
+| 3 VPC | `AddressLimitExceeded` on the NAT's EIP; CIDR/AZ errors | Service Quotas for Elastic IPs; `terraform console` with `cidrsubnet()`; `describe-availability-zones` |
+| 4 EKS | `Unauthorized` from kubectl; timeout; `NodeCreationFailure` | Access-entry principal ARN vs `get-caller-identity` (SSO path); your IP in `api_allowed_cidrs`; NAT/route tables |
+| 5 CI | `Not authorized to perform sts:AssumeRoleWithWebIdentity`; later `AccessDenied` | Trust-policy `sub` vs the job (case, environment name, `id-token: write`); CloudTrail for the denied action |
+| 6 Flux | Kustomization not Ready; bootstrap auth failure | `flux get all -A`, `describe kustomization`, `flux logs`; token scope and repo existence |
+
+Always read the error's **resource address** first (for example `module.vpc.aws_eip.nat[0]`): it tells you exactly which
+piece failed, and most Terraform problems are solved by reading that one line carefully.
