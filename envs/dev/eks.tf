@@ -40,7 +40,7 @@ module "eks" {
   # Exact pin: modules have no lock file. 21.26.0 was the latest stable release
   # when written. v21 renamed many v20 inputs (name, kubernetes_version,
   # addons...), so never copy v20 examples blindly.
-  version = "21.26.0"
+  version = "21.29.0"
 
   name               = var.cluster_name
   kubernetes_version = var.kubernetes_version
