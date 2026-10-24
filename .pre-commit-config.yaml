@@ -7,7 +7,7 @@
 # `pre-commit autoupdate`.
 repos:
   - repo: https://github.com/antonbabenko/pre-commit-terraform
-    rev: v1.109.2
+    rev: v1.109.3
     hooks:
       # terraform fmt: canonical formatting, ends style debates in review.
       - id: terraform_fmt
