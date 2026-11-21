@@ -55,7 +55,7 @@ module "vpc" {
   # Exact pin (not "~>"). Unlike providers, modules have no lock file, so an
   # exact version is what makes builds reproducible. 6.7.3 was the latest
   # stable release when this was written; it needs AWS provider >= 6.28.
-  version = "6.7.3"
+  version = "6.8.0"
 
   name = "${var.cluster_name}-vpc"
   cidr = var.vpc_cidr
